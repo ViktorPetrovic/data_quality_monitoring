@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Data files (кроме служебных)
+*.csv
+*.parquet
+*.json
+*.db
+*.sqlite
+data/raw/*
+data/processed/*
+data/metrics/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/metrics/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Airflow (локальные файлы)
+airflow.db
+airflow.cfg
+webserver_config.py
+airflow-webserver.pid
+
+# Docker
+*.pid
