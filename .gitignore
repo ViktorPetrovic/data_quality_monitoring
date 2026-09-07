@@ -45,3 +45,4 @@ airflow-webserver.pid
 
 # Docker
 *.pid
+ruff.toml
