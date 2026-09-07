@@ -1,77 +1,66 @@
 x-airflow-common: &airflow-common
-  build: .
-  environment: &airflow-common-env
+  image: apache/airflow:3.3.1-python3.11
+  environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: 60
-    AIRFLOW__WEBSERVER__SECRET_KEY: 'your-secret-key-change-me'
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    AIRFLOW__CORE__DAG_BUNDLE_NAME: dags-folder
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: 30
   volumes:
     - ./dags:/opt/airflow/dags
-    - ./data:/opt/airflow/data
     - ./logs:/opt/airflow/logs
+    - ./data:/opt/airflow/data
   depends_on:
     postgres:
       condition: service_healthy
+  env_file:
+    - .env
 
 services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
-      - postgres-db-volume:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
-      interval: 5s
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-airflow}"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+    restart: always
 
-  airflow-init:
+  db-init:
     <<: *airflow-common
-    entrypoint: /bin/bash
-    command: -c "pip install apache-airflow-providers-fab && 
-                airflow db migrate && 
-                airflow users create -u admin -f Admin -l User -r Admin -e admin@example.com -p admin"
-    environment:
-      <<: *airflow-common-env
-      _AIRFLOW_DB_UPGRADE: 'true'
+    command: airflow db migrate 
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-  webserver:
+  airflow:
     <<: *airflow-common
-    command: airflow api-server
+    command: airflow standalone
     ports:
       - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/ || exit 1"]
       interval: 30s
+      timeout: 10s
       retries: 5
-
-  scheduler:
-    <<: *airflow-common
-    command: airflow scheduler
+      start_period: 30s  
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-  dag-processor:
-    <<: *airflow-common
-    command: dag-processor
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
+      db-init:
         condition: service_completed_successfully
 
 volumes:
-  postgres-db-volume:
+  postgres_data:
