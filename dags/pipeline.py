@@ -10,7 +10,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
 logging.basicConfig(
-    level=logging.DEBUG, 
+    level=logging.INFO, 
     format='%(asctime)s - %(levelname)s - %(message)s', 
     datefmt='%Y-%m-%d %H:%M:%S', 
     handlers=[
@@ -46,14 +46,18 @@ def data_generator(**context):
             pressure = np.random.normal(1013, 8)
 
             if random.random() < anomaly_rate:
-                anomaly_type = random.choice(['negative_temp', 'high_humidity'])
+                anomaly_type = random.choice(['negative_temp', 'high_humidity', 'missing_values'])
                 if anomaly_type == 'negative_temp':
                     temp = random.uniform(-30, -10)
-                else:
+                elif anomaly_type == 'high_humidity':
                     humidity=random.uniform(120, 200)
-            temperatures.append(round(temp, 2))
-            pressures.append(round(pressure, 2))
-            humidities.append(round(humidity, 2))
+                elif anomaly_type == 'missing_values':
+                    temp = np.nan
+                    humidity= np.nan
+                    pressure = np.nan
+            temperatures.append(round(temp, 2) if not np.isnan(temp) else None)
+            pressures.append(round(pressure, 2) if not np.isnan(pressure) else None)
+            humidities.append(round(humidity, 2) if not np.isnan(humidity) else None)
             sensor_list.append(random.choice(sensor_ids))
             city_list.append(random.choice(cities))
             timestamps.append(datetime.now().isoformat())
@@ -74,7 +78,7 @@ def data_generator(**context):
 
         df.to_csv(file_path, index=False)
 
-        logging.info(f'Сгенерировано {len(df)} записей в {file_path}')
+        logging.info(f"Сгенерировано {len(df)} записей в {file_path}")
 
         return str(file_path)
 
@@ -87,7 +91,7 @@ def check_data_quality(**context):
 
     logging.info("Запуск проверки качества")
     try:
-        filepath = context['task_instance'].xcom_pull(task_ids=generate_data)
+        filepath = context['task_instance'].xcom_pull(task_ids="generate_data")
         logging.info(f"Получен путь из XCom {filepath}")
 
     
@@ -111,32 +115,32 @@ def check_data_quality(**context):
         null_pressure = df['pressure'].isna().sum()
         total_nulls = null_temperature + null_humidity + null_pressure
 
-        logging.debug(f"Пропуски в температуре - {null_temperature}")
-        logging.debug(f"Пропуски в давлении - {null_pressure}")
-        logging.debug(f"Пропуски во влажности - {null_humidity}")
-        logging.debug(f"Общее колличество пропусков - {total_nulls}")
+        logging.info(f"Пропуски в температуре - {null_temperature}")
+        logging.info(f"Пропуски в давлении - {null_pressure}")
+        logging.info(f"Пропуски во влажности - {null_humidity}")
+        logging.info(f"Общее колличество пропусков - {total_nulls}")
 
         invalid_temp = ((df['temperature'] < 10) | (df['temperature'] > 40)).sum()
         invalid_humidity = ((df['humidity'] < 0) | (df['humidity'] > 100)).sum()
-        invalid_pressure = ((df['pressure'] < 950) | (df['pressure'] > 1000)).sum()  
+        invalid_pressure = ((df['pressure'] < 950) | (df['pressure'] > 1100)).sum()  
         total_invalid = invalid_temp + invalid_humidity + invalid_pressure
 
-        logging.debug(f"Некорректная температура - {invalid_temp}")
-        logging.debug(f"Некорректное давление - {invalid_pressure}")
-        logging.debug(f"Некорректная влажность - {invalid_humidity}")
-        logging.debug(f"Общее колличество некорректных значеий - {total_invalid}")
+        logging.info(f"Некорректная температура - {invalid_temp}")
+        logging.info(f"Некорректное давление - {invalid_pressure}")
+        logging.info(f"Некорректная влажность - {invalid_humidity}")
+        logging.info(f"Общее колличество некорректных значеий - {total_invalid}")
 
 
         logging.info("Расчет показаний качества")
-        null_precent = (total_nulls / (total_records * 3)) * 100 
+        null_percent = (total_nulls / (total_records * 3)) * 100 if total_records > 0 else 0
 
-        invalid_percent = (total_invalid / (total_records * 3)) * 100
+        invalid_percent = (total_invalid / (total_records * 3)) * 100 if total_records > 0 else 0
 
         quality_score = 100 
-        quality_score -= null_precent
+        quality_score -= null_percent
         quality_score -= invalid_percent
         quality_score = round(max(0, min(100, quality_score)), 2)
-        logging.info(f"Пропуски - {null_precent} %")
+        logging.info(f"Пропуски - {null_percent} %")
         logging.info(f"Некоректные - {invalid_percent} %")
         logging.info(f"Оценка качества {quality_score}/100 %")
 
@@ -149,7 +153,7 @@ def check_data_quality(**context):
         'null_humidity':int(null_humidity),
         'null_pressure':int(null_pressure),
         'total_nulls':int(total_nulls),
-        'null_precent':round(null_precent, 2),
+        'null_percent':round(null_percent, 2),
         'invalid_temp':int(invalid_temp),
         'invalid_humidity':int(invalid_humidity),
         'invalid_pressure':int(invalid_pressure),
@@ -173,20 +177,20 @@ def check_data_quality(**context):
         logging.info("Отчёт о качестве данных")
         logging.info(f"Дата: {metrics['data']}")
         logging.info(f"Колличество записей: {total_records}")
-        logging.info(f"Пропусков: {metrics['null_precent']}%")
+        logging.info(f"Пропусков: {metrics['null_percent']}%")
         logging.info(f"Некорректных: {metrics['invalid_percent']}%")
         logging.info(f"Оценка: {metrics['quality_score']}/100")
 
         if metrics['status'] == 'PASS':
-            logging.info('Данные успешно прошли проверку')
+            logging.info("Данные успешно прошли проверку")
         else:
-            logging.warning('FAIL Данные требуют рассмотрения')
-            if metrics['null_precent'] > 10:
-                logging.warning(f'Слишком много пропусков: {metrics['null_precent']}%')
+            logging.warning("FAIL Данные требуют рассмотрения")
+            if metrics['null_percent'] > 10:
+                logging.warning(f"Слишком много пропусков: {metrics['null_percent']}%")
             if metrics['invalid_percent'] > 5:
-                logging.warning(f'Слишком много некорректных значений: {metrics['invalid_percent']}%')
+                logging.warning(f"Слишком много некорректных значений: {metrics['invalid_percent']}%")
 
-        logging.info('Проверка завершена')
+        logging.info("Проверка завершена")
         
         return metrics
 
@@ -198,18 +202,18 @@ def check_data_quality(**context):
 def send_alert(**context):
     logging.info("Проверка алертов")
     try:
-        metrics = context['task_instance'].xcom_pull(task_ids=check_quality)
+        metrics = context['task_instance'].xcom_pull(task_ids="check_quality")
 
         if not metrics:
-            logging.warning('Метрики не получены. Пропуск алертов.')
+            logging.warning("Метрики не получены. Пропуск алертов.")
             return
-        logging.info('Получены метрики из XCom')
+        logging.info("Получены метрики из XCom")
 
         quality_score = metrics.get('quality_score', 0)
         status = metrics.get('status', 'Unknown')
 
-        logging.info(f'Оценка качества - {quality_score}/100')
-        logging.info(f'Статус - {status}')
+        logging.info(f"Оценка качества - {quality_score}/100")
+        logging.info(f"Статус - {status}")
 
         alert_level = 'None'
         alert_messages = []
@@ -262,7 +266,7 @@ def send_alert(**context):
         #         else:
         #             logger.error(f"Ошибка отправки в Telegram: {response.text}")
 
-        logging.info('Проверка алертов завершена')
+        logging.info("Проверка алертов завершена")
 
         return {
             'alert_level':alert_level,
